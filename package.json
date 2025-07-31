@@ -1,0 +1,22 @@
+{
+  "name": "final_projects_server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.0",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.4.0",
+    "mongodb": "^6.17.0",
+    "multer": "^2.0.1",
+    "stripe": "^18.3.0"
+  }
+}
