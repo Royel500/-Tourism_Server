@@ -87,7 +87,74 @@ async function run() {
     const packageCollection = Collection.collection('package')
     const paymentCollection = Collection.collection('payments'); 
 
+// ---------active or offline --------
+// POST /api/users/activity
+// Track user activity
+app.post('/api/users/activity', async (req, res) => {
+  const { email, isActive } = req.body;
+  if (!email) return res.status(400).send({ error: "Email required" });
 
+  try {
+    if (isActive) {
+      // User is online
+      await userCollection.updateOne(
+        { email },
+        {
+          $set: {
+            isActive: true,
+            lastLogin: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+    } else {
+      // User goes offline
+      await userCollection.updateOne(
+        { email },
+        {
+          $set: {
+            isActive: false,
+            lastLogout: new Date(),
+          },
+        }
+      );
+    }
+
+    res.send({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ error: error.message });
+  }
+});
+
+
+
+
+
+// POST /api/auth/logout
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const { email } = req.body; // or get from auth token
+
+    if (!email) return res.status(400).json({ message: 'Email is required' });
+
+    // Update isActive to false and save logout time
+    await userCollection.updateOne(
+      { email },
+      {
+        $set: {
+          isActive: false,
+          lastLogout: new Date(), // record logout date & time
+        },
+      }
+    );
+
+    res.json({ message: 'User logged out' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', error: err.message });
+  }
+});
 
 
 // --------get assign guide -------
@@ -133,16 +200,15 @@ app.patch('/api/bookings/status/:id',verifyToken, async (req, res) => {
 });
 
   //  ------users collection----------
-
-    app.post('/api/users', async (req, res) => {
+app.post('/api/users', async (req, res) => {
   try {
-    const { uid, name, email, photoURL, role } = req.body;
+    const {uid, name, email, photoURL, role } = req.body;
 
-    if (!uid || !email) {
+    if (!email) {
       return res.status(400).json({ message: 'UID and Email are required' });
     }
 
-    const existingUser = await userCollection.findOne({ uid });
+    const existingUser = await userCollection.findOne({ email });
 
     if (existingUser) {
       return res.status(200).json({ message: 'User already exists', user: existingUser });
@@ -155,12 +221,15 @@ app.patch('/api/bookings/status/:id',verifyToken, async (req, res) => {
       photoURL,
       role: role || 'tourist',
       createdAt: new Date(),
+      lastLogin: null,       // default lastLogin
+      isActive: true,       // default active status
+      lastActivity: null,    // for auto offline tracking
     };
 
     const result = await userCollection.insertOne(newUser);
-    res.status(201).json({ message: 'Tourist created', user: result });
+   res.status(201).json({ message: 'Tourist created', user: newUser });// return inserted document
   } catch (err) {
-    console.error(' Server Error:', err.message, err.stack);
+    console.error('Server Error:', err.message, err.stack);
     res.status(500).json({ message: 'Internal Server Error', error: err.message });
   }
 });
@@ -218,11 +287,12 @@ app.patch('/api/tour-guides/update-photo/:email',verifyToken, async (req, res) =
 
 
 // GET /api/users?search=royel&role=admin
-app.get('/api/users',verifyToken, async (req, res) => {
+// Get all users with search, filter, pagination
+app.get('/api/users', async (req, res) => {
   const { search = '', role = 'all', page = 1, limit = 10 } = req.query;
   const filter = {};
 
-  // Search filter
+  // 🔎 Search filter
   if (search) {
     filter.$or = [
       { name: { $regex: search, $options: 'i' } },
@@ -230,7 +300,7 @@ app.get('/api/users',verifyToken, async (req, res) => {
     ];
   }
 
-  // Role filter
+  // 🎭 Role filter
   if (role !== 'all') {
     filter.role = role.toLowerCase();
   }
@@ -239,12 +309,31 @@ app.get('/api/users',verifyToken, async (req, res) => {
 
   try {
     const totalUsers = await userCollection.countDocuments(filter);
-    const users = await userCollection
+
+    let users = await userCollection
       .find(filter)
+      .project({
+        _id: 1,          // always keep ID
+        name: 1,
+        email: 1,
+        role: 1,
+        createdAt: 1,    // keep createdAt for sorting/history
+        lastLogin: 1,
+        lastLogout: 1,
+        isActive: 1
+      })
       .skip(skip)
       .limit(parseInt(limit))
-      .sort({ createdAt: -1 }) // Optional: newest first
+      .sort({ createdAt: -1 }) // newest first
       .toArray();
+
+    // 🕒 Convert dates to ISO string for frontend safety
+    users = users.map(u => ({
+      ...u,
+      createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : null,
+      lastLogin: u.lastLogin ? new Date(u.lastLogin).toISOString() : null,
+      lastLogout: u.lastLogout ? new Date(u.lastLogout).toISOString() : null,
+    }));
 
     res.send({
       totalUsers,
@@ -253,9 +342,12 @@ app.get('/api/users',verifyToken, async (req, res) => {
       totalPages: Math.ceil(totalUsers / limit),
     });
   } catch (error) {
+    console.error(error);
     res.status(500).send({ error: error.message });
   }
 });
+
+
 
 
 // -------manage user profile----------
